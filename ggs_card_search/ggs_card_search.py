@@ -1,12 +1,20 @@
+from sqlite3 import adapters, connect
 import discord
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 import json
 import re
 
 set_list, series_list, rarity_list = [], [], []
 
 def get_values(site):
-    response_API = requests.get(site)
+    session = requests.Session()
+    retry = Retry(connect=3, backoff_factor=0.5)
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)  
+    response_API = session.get(site)
     response_code = response_API.status_code
 
     if response_code == 200:
@@ -29,10 +37,10 @@ def update_values():
         set_list = get_values('https://goddesstcg.com/wp-json/wp/v2/set?per_page=50&_fields=slug')
         series_list = get_values('https://goddesstcg.com/wp-json/wp/v2/series?per_page=300&_fields=slug')
         rarity_list = get_values('https://goddesstcg.com/wp-json/wp/v2/rarity?per_page=50&_fields=slug')
+        print('Updated values')
 
     except:
         print('Unable to access API')
-
 
 update_values()
 
