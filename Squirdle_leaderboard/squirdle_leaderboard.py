@@ -18,7 +18,12 @@ sql_check_squirdle_message = """ SELECT * FROM squirdles
                                  WHERE message_id = ?
                                  ; """
 
-sql_check_daily_message = """ SELECT * FROM squirdles
+sql_check_user_scores = """ SELECT daily_number, score FROM squirdles
+                            WHERE user_id = ?
+                            ORDER BY daily_number + 0
+                            ; """
+
+sql_check_daily_score = """ SELECT daily_number, score FROM squirdles
                               WHERE user_id = ? AND daily_number = ?
                               ; """
 
@@ -26,14 +31,18 @@ sql_insert_daily_message = """ INSERT INTO squirdles (message_id, user_id, daily
                                VALUES (?,?,?,?,?)
                                ; """
 
+sql_remove_daily_score = """ DELETE FROM squirdles
+                             WHERE user_id = ? AND daily_number = ?
+                             ; """
+
 sql_update_daily_score = """ UPDATE squirdles
                              SET score = ?
                              WHERE user_id = ? AND daily_number = ?
                              ; """
 
-sql_squirdle_leaderboard = """ SELECT user_id, avg(score) FROM squirdles
+sql_squirdle_leaderboard = """ SELECT user_id, avg(score), count(user_id) FROM squirdles
                                GROUP BY user_id
-                               ORDER BY avg(score)
+                               ORDER BY avg(score), count(user_id) DESC
                               ; """
 
 def create_connection(db_file):
@@ -63,13 +72,11 @@ def check_message_id(conn, message_id):
         return False
     return True
 
-def check_daily_message(conn, user_id, daily_number):
+def check_daily_score(conn, user_id, daily_number):
     cur = conn.cursor()
-    cur.execute(sql_check_daily_message, (user_id, daily_number,))
+    cur.execute(sql_check_daily_score, (user_id, daily_number,))
     rows = cur.fetchall()
-    if len(rows) > 0:
-        return True
-    return False
+    return rows
 
 def insert_daily_message(conn, message_id, user_id, daily_number, score):
     cur = conn.cursor()
@@ -77,7 +84,7 @@ def insert_daily_message(conn, message_id, user_id, daily_number, score):
     date_time = now.strftime("%m/%d/%Y, %H:%M:%S")
     cur.execute(sql_insert_daily_message, (message_id, user_id, daily_number, score, date_time,))
     conn.commit()
-    return check_daily_message(conn, user_id, daily_number)
+    return check_daily_score(conn, user_id, daily_number)
 
 async def update_daily_score(conn, message, user_id):
     split_update_message = message.content.split(' ')
@@ -87,21 +94,49 @@ async def update_daily_score(conn, message, user_id):
     
     daily_number = split_update_message[1]
     score = split_update_message[2]
-    if not check_for_int(message, daily_number, score):
+    daily_score = check_daily_score(conn, user_id, daily_number)
+    if len(daily_score) < 1:
+        await message.reply('Daily #{0} does not exist for {1}.'.format(daily_number, message.author.name))
+        return
+    if not await check_for_int(message, daily_number, score):
         return
     cur = conn.cursor()
     cur.execute(sql_update_daily_score, (score, user_id, daily_number,))
     conn.commit()
     await message.reply('Daily #{0} set to score of {1}'.format(daily_number, score))
 
+async def remove_daily_score(conn, message, user_id):
+    split_update_message = message.content.split(' ')
+    if len(split_update_message) != 2:
+        print('Wrong amount of parameters provided.')
+        return
+    
+    daily_number = split_update_message[1]
+    if not await check_for_int(message, daily_number, 0):
+        return
+    cur = conn.cursor()
+    cur.execute(sql_remove_daily_score, (user_id, daily_number,))
+    conn.commit()
+    await message.reply('Daily #{0} removed for user {1}'.format(daily_number, message.author.name))
+
+def show_user_score(conn, user_id):
+    cur = conn.cursor()
+    cur.execute(sql_check_user_scores, (user_id,))
+    rows = cur.fetchall()
+    t = PrettyTable(['Daily #', 'Score'])
+    for row in rows:
+        t.add_row(row)
+    return t
+
 def show_leaderboard(conn, client):
     cur = conn.cursor()
     cur.execute(sql_squirdle_leaderboard)
     rows = cur.fetchall()
-    t = PrettyTable(['User ID', 'Average Score'])
+    t = PrettyTable(['User ID', 'Average Score', 'Total Days'])
     for row in rows:
         user = client.get_user(int(row[0]))
-        new_row = (user.display_name, row[1])
+        score = float("{0:.2f}".format(row[1]))
+        new_row = (user.display_name, score, row[2])
         t.add_row(new_row)
     return t
 
@@ -147,6 +182,36 @@ async def on_message(message):
         await update_daily_score(conn, message, user_id)
         print('Score updated.')
         return
+    
+    if message.content.startswith('?remove'):
+        await remove_daily_score(conn, message, user_id)
+        print('Score removed.')
+        return
+
+    if message.content.startswith('?scores'):
+        table = show_user_score(conn, user_id)
+        await message.reply(table)
+        return
+
+    if message.content.startswith('?score'):
+        score_message_split = message.content.split(' ')
+        try:
+            daily_number = score_message_split[1]
+        except:
+            print(incorrect_format)
+            await message.reply(incorrect_format) 
+            return
+
+        if not await check_for_int(message, daily_number, 0):
+            return
+        
+        daily_score_rows = check_daily_score(conn, user_id, daily_number)
+        if len(daily_score_rows) < 1:
+            await message.reply('Daily #{0} does not exist for {1}.'.format(daily_number, message.author.name))
+            return
+        daily_score = daily_score_rows[0]
+        await message.reply('Daily #{0} has a score of {1}'.format(daily_score[0], daily_score[1]))
+        return
 
     if not message.content.startswith('Squirdle'):
         return
@@ -177,12 +242,14 @@ async def on_message(message):
     if not await check_for_int(message, daily_number, score):
         return
 
-    if check_daily_message(conn, user_id, daily_number):
+    check_score = check_daily_score(conn, user_id, daily_number)
+    if len(check_score) > 0:
         print('Daily score already exists for {}.'.format(message.author.name))
         await message.reply('Daily score already exists for {}.'.format(message.author.name))
         return
 
-    if insert_daily_message(conn, message.id, user_id, daily_number, score):
+    new_insert = insert_daily_message(conn, message.id, user_id, daily_number, score)
+    if len(new_insert) > 0:
         print('New Result Added. Daily: {}, Score: {}.'.format(daily_number, score))
     else:
         print('Unable to add new result.')
