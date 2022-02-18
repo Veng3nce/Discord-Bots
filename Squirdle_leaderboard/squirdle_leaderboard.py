@@ -5,6 +5,7 @@ from sqlite3 import Error
 from prettytable import PrettyTable
 
 incorrect_format = 'Unable to add score, incorrect format provided.'
+incorrect_find_format = 'Unable to find score, incorrect format provided.'
 
 sql_create_squirdles_table = """ CREATE TABLE IF NOT EXISTS squirdles (
                                         message_id text PRIMARY KEY,
@@ -127,10 +128,7 @@ def show_user_score(conn, user_id):
     cur = conn.cursor()
     cur.execute(sql_check_user_scores, (user_id,))
     rows = cur.fetchall()
-    t = PrettyTable(['Daily #', 'Score'])
-    for row in rows:
-        t.add_row(row)
-    return t
+    return rows
 
 def get_leaderboard(conn):
     cur = conn.cursor()
@@ -155,12 +153,15 @@ async def send_leaderboard(message, rows):
     embed.add_field(name='Total Days', value=days, inline=True)
     await message.reply(embed=embed)
 
-async def send_score(message, row):
-    daily_number = row[0]
-    score = row[1]
+async def send_score(message, rows):
+    daily_numbers = ''
+    scores = ''
+    for row in rows:
+        daily_numbers += str(row[0]) + '\n'
+        scores += str(row[1]) + '\n'
     embed = discord.Embed(title='Daily Score')
-    embed.add_field(name='Daily #', value=daily_number, inline=True)
-    embed.add_field(name='Score', value=score, inline=True)
+    embed.add_field(name='Daily #', value=daily_numbers, inline=True)
+    embed.add_field(name='Score', value=scores, inline=True)
     await message.reply(embed=embed)
 
 async def check_for_int(message, daily_number, score):
@@ -212,8 +213,8 @@ async def on_message(message):
         return
 
     if message.content.startswith('?scores'):
-        table = show_user_score(conn, user_id)
-        await message.reply(table)
+        rows = show_user_score(conn, user_id)
+        await send_score(message, rows)
         return
 
     if message.content.startswith('?score'):
@@ -221,8 +222,8 @@ async def on_message(message):
         try:
             daily_number = score_message_split[1]
         except:
-            print(incorrect_format)
-            await message.reply(incorrect_format) 
+            print(incorrect_find_format)
+            await message.reply(incorrect_find_format) 
             return
 
         if not await check_for_int(message, daily_number, 0):
@@ -232,8 +233,7 @@ async def on_message(message):
         if len(daily_score_rows) < 1:
             await message.reply('Daily #{0} does not exist for {1}.'.format(daily_number, message.author.name))
             return
-        daily_score_row = daily_score_rows[0]
-        await send_score(message, daily_score_row)
+        await send_score(message, daily_score_rows)
         return
 
     if not message.content.startswith('Squirdle'):
