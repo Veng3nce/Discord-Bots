@@ -114,6 +114,10 @@ async def remove_daily_score(conn, message, user_id):
     daily_number = split_update_message[1]
     if not await check_for_int(message, daily_number, 0):
         return
+    daily_score = check_daily_score(conn, user_id, daily_number)
+    if len(daily_score) < 1:
+        await message.reply('Daily #{0} does not exist for {1}.'.format(daily_number, message.author.name))
+        return
     cur = conn.cursor()
     cur.execute(sql_remove_daily_score, (user_id, daily_number,))
     conn.commit()
@@ -128,17 +132,36 @@ def show_user_score(conn, user_id):
         t.add_row(row)
     return t
 
-def show_leaderboard(conn, client):
+def get_leaderboard(conn):
     cur = conn.cursor()
     cur.execute(sql_squirdle_leaderboard)
     rows = cur.fetchall()
-    t = PrettyTable(['User ID', 'Average Score', 'Total Days'])
+    return rows
+
+async def send_leaderboard(message, rows):
+    embed = discord.Embed(title='Squirdle Leaderboard')
+    users = ''
+    scores = ''
+    days = ''
     for row in rows:
         user = client.get_user(int(row[0]))
-        score = float("{0:.2f}".format(row[1]))
-        new_row = (user.display_name, score, row[2])
-        t.add_row(new_row)
-    return t
+        username = user.name
+        users += username + '\n'
+        scores += str(float("{0:.2f}".format(row[1]))) + '\n'
+        days += str(row[2]) + '\n'
+
+    embed.add_field(name='User ID', value=users, inline=True)
+    embed.add_field(name='Average Score', value=scores, inline=True)
+    embed.add_field(name='Total Days', value=days, inline=True)
+    await message.reply(embed=embed)
+
+async def send_score(message, row):
+    daily_number = row[0]
+    score = row[1]
+    embed = discord.Embed(title='Daily Score')
+    embed.add_field(name='Daily #', value=daily_number, inline=True)
+    embed.add_field(name='Score', value=score, inline=True)
+    await message.reply(embed=embed)
 
 async def check_for_int(message, daily_number, score):
     try:
@@ -174,8 +197,8 @@ async def on_message(message):
         return
 
     if message.content.startswith('?leaderboard'):
-        table = show_leaderboard(conn, client)
-        await message.reply(table)
+        rows = get_leaderboard(conn)
+        await send_leaderboard(message, rows)
         return
 
     if message.content.startswith('?update'):
@@ -209,8 +232,10 @@ async def on_message(message):
         if len(daily_score_rows) < 1:
             await message.reply('Daily #{0} does not exist for {1}.'.format(daily_number, message.author.name))
             return
-        daily_score = daily_score_rows[0]
-        await message.reply('Daily #{0} has a score of {1}'.format(daily_score[0], daily_score[1]))
+        daily_score_row = daily_score_rows[0]
+        await send_score(message, daily_score_row)
+        #daily_score = daily_score_rows[0]
+        #await message.reply('Daily #{0} has a score of {1}'.format(daily_score[0], daily_score[1]))
         return
 
     if not message.content.startswith('Squirdle'):
