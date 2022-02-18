@@ -234,8 +234,6 @@ async def on_message(message):
             return
         daily_score_row = daily_score_rows[0]
         await send_score(message, daily_score_row)
-        #daily_score = daily_score_rows[0]
-        #await message.reply('Daily #{0} has a score of {1}'.format(daily_score[0], daily_score[1]))
         return
 
     if not message.content.startswith('Squirdle'):
